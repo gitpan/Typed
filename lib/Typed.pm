@@ -10,7 +10,7 @@ use Scalar::Util qw();
 use parent qw(Exporter);
 our @EXPORT = qw(has subtype as where message new);
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 sub new {
     my $self = shift;
@@ -32,7 +32,7 @@ sub new {
 
     my %user_vals = @_;
     foreach my $k (keys %user_vals) {
-        $blessed->$k($user_vals{$k});
+        $blessed->{$k} = $user_vals{$k}; # TODO: Use the attribute method.
     }
 
     my $build = $blessed->can("BUILD");
