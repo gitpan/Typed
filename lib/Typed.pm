@@ -10,7 +10,7 @@ use Scalar::Util qw();
 use parent qw(Exporter);
 our @EXPORT = qw(has subtype as where message new);
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 sub new {
     my $self = shift;
@@ -84,15 +84,15 @@ our %meta = (
 my %constraints = (
     Bool => {
         where => sub {
-            return 1 if 1 == $_;
-            return 1 if 0 == $_;
-            return 1 if '' eq $_;
+            return 1 if 1 == $_[0];
+            return 1 if 0 == $_[0];
+            return 1 if '' eq $_[0];
             return 0;
         },
     },
     Str => {
         where => sub {
-            my $type = ref($_);
+            my $type = ref($_[0]);
 
             return 1 if !$type;
             return 0;
@@ -100,7 +100,7 @@ my %constraints = (
     },
     "FileHandle" => {
         where => sub {
-            my $type = Scalar::Util::openhandle($_);
+            my $type = Scalar::Util::openhandle($_[0]);
 
             return 1 if defined $type;
             return 0;
@@ -108,7 +108,7 @@ my %constraints = (
     },
     "Object" => {
         where => sub {
-            my $type = Scalar::Util::blessed($_);
+            my $type = Scalar::Util::blessed($_[0]);
 
             return 1 if defined $type;
             return 0 if defined $type;
@@ -116,21 +116,23 @@ my %constraints = (
     },
     "Num" => {
         where => sub {
-            return 1 if Scalar::Util::looks_like_number($_);
+            return 1;
+            return 1 if Scalar::Util::looks_like_number($_[0]);
             return 0;
         },
     },
     "Int" => {
         where => sub {
-            return 1 if /^-?\d+\z/;
+            return 1 if Scalar::Util::looks_like_number(abs($_[0]));
             return 0;
         },
     },
     ClassName => {
         where => sub {
+            my $value = shift;
             my $opts = shift;
 
-            my $type = Scalar::Util::blessed($_);
+            my $type = Scalar::Util::blessed($value);
 
             return 1 if defined $type && $type eq $$opts{isa};
             return 0;
@@ -140,10 +142,7 @@ my %constraints = (
 
 # Constraint verification sub
 sub type {
-    my $class = shift;
-    my $name = shift;
-    my $value = shift;
-    my $opts = shift;
+    my ($class, $name, $value, $opts) = @_;
 
     return 1 if !defined $value;
 
@@ -157,15 +156,14 @@ sub type {
     }
 
     {
-        local $_ = $value;
-
-        return 1 if $$opts{where}->($$opts{opts});
+        return 1 if $$opts{where}->($value, $$opts{opts});
 
         if ($constraints{$isa}{message}) {
+            local $_ = $value;
             Carp::croak($constraints{$isa}{message}->());
         }
         else {
-            Carp::croak("$_ does not match the type constraints: $isa");
+            Carp::croak("$value does not match the type constraints: $isa for $name");
         }
     }
 }
@@ -194,10 +192,7 @@ sub process_has {
     my $name = shift;
     my $package = shift;
 
-    my %opts = %{ $meta{$package}{$name} };
-
-    my $writable = $opts{is} && "rw" eq $opts{is};
-    my $isa = $opts{isa};
+    my $isa = $meta{$package}{$name}{isa};
 
     my $where;
     if ($constraints{$isa}) {
@@ -207,14 +202,25 @@ sub process_has {
         $where = $constraints{ClassName}{where};
     }
 
+    my $is = $meta{$package}{$name}{is};
     my $attribute = sub {
         my $self = shift;
 
         state $name = $name;
         state $package = $package;
-        state $writable = $writable;
+        state $writable = $is && "rw" eq $is;
         state $type = { isa => $isa, where => $where, opts => { isa => $isa }};
         state $opts = $meta{$package}{$name};
+
+=for comment
+        state $config = {
+            name => $name,
+            package => $package,
+            writable => $is && "rw" eq $is,
+            type => { isa => $isa, where => $where, opts => { isa => $isa }},
+            opts => $meta{$package}{$name},
+        };
+=cut
 
         if (!exists $self->{$name}) {
             __PACKAGE__->default($self, $package, $name, $opts, 0);
@@ -225,7 +231,15 @@ sub process_has {
             if ($writable) {
                 my $value = shift;
 
-                __PACKAGE__->type($name, $value, $type);
+                # Need subtypes
+                if ($constraints{$isa} && $constraints{$isa}{as}) {
+                    __PACKAGE__->type($name, $value, $type);
+                }
+                else {
+                    # Common case is faster
+                    $$type{where}->($value, $opts) ||
+                    __PACKAGE__->type($name, $value, $type);
+                }
 
                 $self->{$name} = $value;
             }
@@ -234,7 +248,7 @@ sub process_has {
             }
         }
 
-        return($self->{$name});
+        return($self->{name});
     };
 
     return($attribute);
