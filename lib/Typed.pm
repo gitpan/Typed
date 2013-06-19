@@ -10,7 +10,7 @@ use Scalar::Util qw();
 use parent qw(Exporter);
 our @EXPORT = qw(has subtype as where message new);
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 sub new {
     my $self = shift;
@@ -84,15 +84,15 @@ our %meta = (
 my %constraints = (
     Bool => {
         where => sub {
-            return 1 if 1 == $_[0];
-            return 1 if 0 == $_[0];
-            return 1 if '' eq $_[0];
+            return 1 if '1' eq $_;
+            return 1 if '0' eq $_;
+            return 1 if '' eq $_;
             return 0;
         },
     },
     Str => {
         where => sub {
-            my $type = ref($_[0]);
+            my $type = ref($_);
 
             return 1 if !$type;
             return 0;
@@ -100,7 +100,7 @@ my %constraints = (
     },
     "FileHandle" => {
         where => sub {
-            my $type = Scalar::Util::openhandle($_[0]);
+            my $type = Scalar::Util::openhandle($_);
 
             return 1 if defined $type;
             return 0;
@@ -108,7 +108,7 @@ my %constraints = (
     },
     "Object" => {
         where => sub {
-            my $type = Scalar::Util::blessed($_[0]);
+            my $type = Scalar::Util::blessed($_);
 
             return 1 if defined $type;
             return 0 if defined $type;
@@ -116,26 +116,29 @@ my %constraints = (
     },
     "Num" => {
         where => sub {
-            return 1;
-            return 1 if Scalar::Util::looks_like_number($_[0]);
+            return 1 if Scalar::Util::looks_like_number($_);
             return 0;
         },
     },
     "Int" => {
         where => sub {
-            return 1 if Scalar::Util::looks_like_number(abs($_[0]));
+            return 0 if !Scalar::Util::looks_like_number($_);
+            return 1 if $_ == int($_);
             return 0;
         },
     },
     ClassName => {
         where => sub {
-            my $value = shift;
-            my $opts = shift;
-
-            my $type = Scalar::Util::blessed($value);
-
-            return 1 if defined $type && $type eq $$opts{isa};
-            return 0;
+            # Types::Standard
+            return !!0 if ref $_;
+            return !!0 if !defined $_;
+            my $stash = do { no strict 'refs'; \%{"$_\::"} };
+            return !!1 if exists $stash->{'ISA'};
+            return !!1 if exists $stash->{'VERSION'};
+            foreach my $globref (values %$stash) {
+                return !!1 if *{$globref}{CODE};
+            }
+            return !!0;
         },
     },
 );
@@ -156,14 +159,15 @@ sub type {
     }
 
     {
-        return 1 if $$opts{where}->($value, $$opts{opts});
+        local $_ = $value;
+
+        return 1 if $$opts{where}->();
 
         if ($constraints{$isa}{message}) {
-            local $_ = $value;
             Carp::croak($constraints{$isa}{message}->());
         }
         else {
-            Carp::croak("$value does not match the type constraints: $isa for $name");
+            Carp::croak("$_ does not match the type constraints: $isa for $name");
         }
     }
 }
@@ -203,52 +207,38 @@ sub process_has {
     }
 
     my $is = $meta{$package}{$name}{is};
+    my $writable = $is && "rw" eq $is;
+    my $type = { isa => $isa, where => $where, opts => { isa => $isa }};
+    my $opts = $meta{$package}{$name};
+
     my $attribute = sub {
-        my $self = shift;
-
-        state $name = $name;
-        state $package = $package;
-        state $writable = $is && "rw" eq $is;
-        state $type = { isa => $isa, where => $where, opts => { isa => $isa }};
-        state $opts = $meta{$package}{$name};
-
-=for comment
-        state $config = {
-            name => $name,
-            package => $package,
-            writable => $is && "rw" eq $is,
-            type => { isa => $isa, where => $where, opts => { isa => $isa }},
-            opts => $meta{$package}{$name},
-        };
-=cut
-
-        if (!exists $self->{$name}) {
-            __PACKAGE__->default($self, $package, $name, $opts, 0);
+        if (!exists $_[0]->{$name}) {
+            __PACKAGE__->default($_[0], $package, $name, $opts, 0);
         }
 
         # Do we set the value
-        if (scalar(@_)) {
+        if (1 == $#_) {
             if ($writable) {
-                my $value = shift;
+                return($_[0]->{$name} = undef) if !defined $_[1];
 
                 # Need subtypes
                 if ($constraints{$isa} && $constraints{$isa}{as}) {
-                    __PACKAGE__->type($name, $value, $type);
+                    __PACKAGE__->type($name, $_[1], $type);
                 }
                 else {
                     # Common case is faster
-                    $$type{where}->($value, $opts) ||
-                    __PACKAGE__->type($name, $value, $type);
+                    local $_ = $_[1];
+                    $where->() || Carp::croak("$_ does not match the type constraints: $isa for $name");
                 }
 
-                $self->{$name} = $value;
+                $_[0]->{$name} = $_[1];
             }
             else {
                 Carp::croak("Attempt to modify read-only attribute: $name");
             }
         }
 
-        return($self->{name});
+        return($_[0]->{$name});
     };
 
     return($attribute);
