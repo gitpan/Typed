@@ -21,7 +21,7 @@ my %WriteMakefileArgs = (
   "NAME" => "Typed",
   "PREREQ_PM" => {},
   "TEST_REQUIRES" => {},
-  "VERSION" => "0.05",
+  "VERSION" => "0.06",
   "test" => {
     "TESTS" => "t/*.t"
   }

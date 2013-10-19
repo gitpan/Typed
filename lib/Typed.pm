@@ -10,7 +10,7 @@ use Scalar::Util qw();
 use parent qw(Exporter);
 our @EXPORT = qw(has subtype as where message new);
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 sub new {
     my $self = shift;
