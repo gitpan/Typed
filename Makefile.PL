@@ -19,9 +19,12 @@ my %WriteMakefileArgs = (
   "EXE_FILES" => [],
   "LICENSE" => "perl",
   "NAME" => "Typed",
-  "PREREQ_PM" => {},
+  "PREREQ_PM" => {
+    "Exporter::Tiny" => 0,
+    "Type::Tiny" => 0
+  },
   "TEST_REQUIRES" => {},
-  "VERSION" => "0.06",
+  "VERSION" => "0.09",
   "test" => {
     "TESTS" => "t/*.t"
   }

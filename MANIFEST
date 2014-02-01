@@ -4,6 +4,7 @@ META.yml
 Makefile.PL
 README
 dist.ini
+examples/typed.pl
 lib/Typed.pm
 t/000_load.t
 t/001_types.t

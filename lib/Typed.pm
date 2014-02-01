@@ -5,12 +5,23 @@ use warnings FATAL => 'all';
 use feature qw(:5.10);
 
 use Carp qw();
-use Scalar::Util qw();
+use Scalar::Util qw(blessed);
 
-use parent qw(Exporter);
-our @EXPORT = qw(has subtype as where message new);
+use Types::Standard "-types";
+use Type::Utils qw();
+use Exporter::Tiny;
 
-our $VERSION = '0.06';
+use parent qw(Exporter::Tiny);
+
+our @EXPORT = qw(has new as from subtype);
+our @TINY_UTILS = qw(message where inline_as declare coerce);
+
+our $VERSION = '0.09';
+
+sub import {
+    shift->SUPER::import({ into => scalar(caller(0)) }, @EXPORT );
+    Type::Utils->import({ into => scalar(caller(0)) }, @TINY_UTILS );
+}
 
 sub new {
     my $self = shift;
@@ -81,116 +92,6 @@ sub default {
 our %meta = (
 );
 
-my %constraints = (
-    Bool => {
-        where => sub {
-            return 1 if '1' eq $_;
-            return 1 if '0' eq $_;
-            return 1 if '' eq $_;
-            return 0;
-        },
-    },
-    Str => {
-        where => sub {
-            my $type = ref($_);
-
-            return 1 if !$type;
-            return 0;
-        },
-    },
-    "FileHandle" => {
-        where => sub {
-            my $type = Scalar::Util::openhandle($_);
-
-            return 1 if defined $type;
-            return 0;
-        },
-    },
-    "Object" => {
-        where => sub {
-            my $type = Scalar::Util::blessed($_);
-
-            return 1 if defined $type;
-            return 0 if defined $type;
-        },
-    },
-    "Num" => {
-        where => sub {
-            return 1 if Scalar::Util::looks_like_number($_);
-            return 0;
-        },
-    },
-    "Int" => {
-        where => sub {
-            return 0 if !Scalar::Util::looks_like_number($_);
-            return 1 if $_ == int($_);
-            return 0;
-        },
-    },
-    ClassName => {
-        where => sub {
-            # Types::Standard
-            return !!0 if ref $_;
-            return !!0 if !defined $_;
-            my $stash = do { no strict 'refs'; \%{"$_\::"} };
-            return !!1 if exists $stash->{'ISA'};
-            return !!1 if exists $stash->{'VERSION'};
-            foreach my $globref (values %$stash) {
-                return !!1 if *{$globref}{CODE};
-            }
-            return !!0;
-        },
-    },
-);
-
-# Constraint verification sub
-sub type {
-    my ($class, $name, $value, $opts) = @_;
-
-    return 1 if !defined $value;
-
-    my $isa = $$opts{isa};
-
-    if ($constraints{$isa} && $constraints{$isa}{as}) {
-        my $isa = $constraints{$isa}{as};
-        my $where = $constraints{$isa}{where};
-
-        $class->type($name, $value, { isa => $isa, where => $where, opts => { isa => $isa }});
-    }
-
-    {
-        local $_ = $value;
-
-        return 1 if $$opts{where}->();
-
-        if ($constraints{$isa}{message}) {
-            Carp::croak($constraints{$isa}{message}->());
-        }
-        else {
-            Carp::croak("$_ does not match the type constraints: $isa for $name");
-        }
-    }
-}
-
-sub subtype {
-    my $subtype = shift;
-    my %opts = @_;
-
-    Carp::croak("No subtype given.") if !$subtype;
-    Carp::croak("No as given.") if !$opts{as};
-    Carp::croak("No where given.") if !$opts{where};
-
-    $constraints{$subtype} = {
-        as => $opts{as},
-        where => $opts{where},
-        message => $opts{message},
-    };
-}
-
-sub as          ($) { (as          => $_[0]) } ## no critic
-sub where       (&) { (where       => $_[0]) } ## no critic
-sub message     (&) { (message     => $_[0]) } ## no critic
-
 sub process_has {
     my $self = shift;
     my $name = shift;
@@ -198,17 +99,8 @@ sub process_has {
 
     my $isa = $meta{$package}{$name}{isa};
 
-    my $where;
-    if ($constraints{$isa}) {
-        $where = $constraints{$isa}{where};
-    }
-    else {
-        $where = $constraints{ClassName}{where};
-    }
-
     my $is = $meta{$package}{$name}{is};
     my $writable = $is && "rw" eq $is;
-    my $type = { isa => $isa, where => $where, opts => { isa => $isa }};
     my $opts = $meta{$package}{$name};
 
     my $attribute = sub {
@@ -221,14 +113,14 @@ sub process_has {
             if ($writable) {
                 return($_[0]->{$name} = undef) if !defined $_[1];
 
-                # Need subtypes
-                if ($constraints{$isa} && $constraints{$isa}{as}) {
-                    __PACKAGE__->type($name, $_[1], $type);
-                }
-                else {
-                    # Common case is faster
-                    local $_ = $_[1];
-                    $where->() || Carp::croak("$_ does not match the type constraints: $isa for $name");
+                if ($isa) {
+                    my $package = blessed($_[0]);
+                    my $type = Types::Standard->get_type($isa) || $meta{subtype}{$package}{$isa};
+
+                    if ($type) {
+                        my $msg = $type->validate($_[1]);
+                        Carp::croak($msg) if $msg; 
+                    }
                 }
 
                 $_[0]->{$name} = $_[1];
@@ -254,6 +146,33 @@ sub has {
     my $attribute = __PACKAGE__->process_has($name, $package);
 
     { no strict 'refs'; *{"${package}::$name"} = $attribute; }
+}
+
+sub as (@) {
+	unless (blessed($_[0])) {
+        my $type = shift(@_);
+        unshift(@_, __PACKAGE__->$type);
+    }
+
+    Type::Utils::as(@_);
+}
+
+sub from (@)
+{
+	unless (blessed($_[0])) {
+        my $type = shift(@_);
+        unshift(@_, __PACKAGE__->$type);
+    }
+
+    Type::Utils::from(@_);
+}
+
+sub subtype
+{
+    my $subtype = Type::Utils::subtype(@_);
+    my $package = caller;
+    my $name = $_[0];
+    $meta{subtype}{$package}{$name} = $subtype;
 }
 
 1;
