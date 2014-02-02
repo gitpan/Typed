@@ -16,7 +16,7 @@ use parent qw(Exporter::Tiny);
 our @EXPORT = qw(has new as from subtype);
 our @TINY_UTILS = qw(message where inline_as declare coerce);
 
-our $VERSION = '0.09';
+our $VERSION = '0.10';
 
 sub import {
     shift->SUPER::import({ into => scalar(caller(0)) }, @EXPORT );
@@ -32,19 +32,10 @@ sub new {
     my $meta_pkg = __PACKAGE__;
     my $meta = do { no strict 'refs'; \%{"${meta_pkg}::meta"}; };
 
-    if ($meta && $$meta{$class}) {
-        my $has = $$meta{$class};
-        foreach my $name (keys %{ $has }) {
-            my $opts = $$meta{$class}{$name};
-
-            __PACKAGE__->default($blessed, $class, $name, $opts, $$opts{lazy});
-        }
-    }
-
-    my %user_vals = @_;
-    foreach my $k (keys %user_vals) {
-        $blessed->{$k} = $user_vals{$k}; # TODO: Use the attribute method.
-    }
+     my %user_vals = @_;
+     foreach my $k (keys %user_vals) {
+         $blessed->$k($user_vals{$k});
+     }
 
     my $build = $blessed->can("BUILD");
     if ($build) {
@@ -52,40 +43,6 @@ sub new {
     }
 
     return($blessed);
-}
-
-sub default {
-    my $meta_pkg = shift;
-    my $self = shift;
-    my $package = shift;
-    my $name = shift;
-    my $opts = shift;
-    my $lazy = shift;
-
-    my $default;
-    unless ($lazy) {
-        if ($$opts{default}) {
-            my $type = ref($$opts{default});
-            if ($type && "CODE" eq $type) {
-                $default = $$opts{default}->();
-            }
-            else {
-                $default = $$opts{default};
-            }
-        }
-
-        if ($$opts{builder}) {
-            my $builder = do { no strict 'refs'; \&{"${package}::$$opts{builder}"}; };
-
-            if ($builder) {
-                $default = $builder->($self);
-            }
-        }
-
-        $self->{$name} = $default; # TODO: Use the attribute method.
-    }
-    
-    return($default);
 }
 
 # Yes, we use a global cache for metadata
@@ -104,10 +61,10 @@ sub process_has {
     my $opts = $meta{$package}{$name};
 
     my $attribute = sub {
-        if (!exists $_[0]->{$name}) {
-            __PACKAGE__->default($_[0], $package, $name, $opts, 0);
+        if (!exists $_[0]->{$name} && $$opts{default}) {
+            $_[0]->{$name} = $$opts{default};
         }
-
+        
         # Do we set the value
         if (1 == $#_) {
             if ($writable) {
@@ -130,7 +87,7 @@ sub process_has {
             }
         }
 
-        return($_[0]->{$name});
+        return("CODE" eq ref($_[0]->{$name}) ? $_[0]->{$name}->() : $_[0]->{$name});
     };
 
     return($attribute);
@@ -144,8 +101,7 @@ sub has {
     $meta{$package}{$name} = \%opts;
 
     my $attribute = __PACKAGE__->process_has($name, $package);
-
-    { no strict 'refs'; *{"${package}::$name"} = $attribute; }
+    { no strict 'refs'; *{"${package}::$name"} = $attribute; };
 }
 
 sub as (@) {
