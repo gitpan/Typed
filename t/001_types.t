@@ -58,13 +58,17 @@ like($@, qr/did not pass type constraint/);
 # Hrmm.  Should this work?
 # $typed->Int("0E0");
 # is($typed->Int(), "0E0", "Int is 0E0");
-is($typed->Int(undef), undef, "Int is undefined");
+is($typed->Int(1), 1, "Int is 1");
 
 is($typed->Str(), undef, "Str is undefined");
+is($typed->Str("abc"), "abc", "Str is abc");
 is($typed->Str(5), 5, "Str is 5");
 is($typed->Str(), 5, "Str is 5");
 is($typed->Str("Weee"), "Weee", "Str is Weee");
-is($typed->Str(undef), undef, "Str is undefined");
+eval {
+    $typed->Str(undef);
+};
+like($@, qr/did not pass type constraint/);
 
 isa_ok($typed->Class(), "IO::Handle", "IO::Handle::getline");
 eval {

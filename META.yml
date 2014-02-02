@@ -15,4 +15,4 @@ name: Typed
 requires:
   Exporter::Tiny: 0
   Type::Tiny: 0
-version: 0.10
+version: 0.11

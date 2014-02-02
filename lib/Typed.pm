@@ -16,7 +16,7 @@ use parent qw(Exporter::Tiny);
 our @EXPORT = qw(has new as from subtype);
 our @TINY_UTILS = qw(message where inline_as declare coerce);
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 sub import {
     shift->SUPER::import({ into => scalar(caller(0)) }, @EXPORT );
@@ -54,40 +54,42 @@ sub process_has {
     my $name = shift;
     my $package = shift;
 
-    my $isa = $meta{$package}{$name}{isa};
-
     my $is = $meta{$package}{$name}{is};
     my $writable = $is && "rw" eq $is;
     my $opts = $meta{$package}{$name};
 
+    my $default;
+    
+    if ($$opts{default}) {
+        $default = sub {
+            $$opts{default};
+        };
+    }
+
     my $attribute = sub {
-        if (!exists $_[0]->{$name} && $$opts{default}) {
-            $_[0]->{$name} = $$opts{default};
+        state $type = $meta{type}{$package}{$name};
+        state $cache = \$_[0]->{$name};
+        state $writable = $writable;
+
+        if ($default) {
+            $_[0]->{$name} = $default->();
+            $default = undef; 
         }
-        
+
         # Do we set the value
         if (1 == $#_) {
             if ($writable) {
-                return($_[0]->{$name} = undef) if !defined $_[1];
+                my $msg = $type->validate($_[1]);
+                Carp::croak($msg) if $msg; 
 
-                if ($isa) {
-                    my $package = blessed($_[0]);
-                    my $type = Types::Standard->get_type($isa) || $meta{subtype}{$package}{$isa};
-
-                    if ($type) {
-                        my $msg = $type->validate($_[1]);
-                        Carp::croak($msg) if $msg; 
-                    }
-                }
-
-                $_[0]->{$name} = $_[1];
+                $$cache = $_[1];
             }
             else {
                 Carp::croak("Attempt to modify read-only attribute: $name");
             }
         }
 
-        return("CODE" eq ref($_[0]->{$name}) ? $_[0]->{$name}->() : $_[0]->{$name});
+        return("CODE" eq ref($$cache) ? $$cache->() : $$cache);
     };
 
     return($attribute);
@@ -99,8 +101,15 @@ sub has {
     my $package = caller;
 
     $meta{$package}{$name} = \%opts;
+    
+    my $isa = $opts{isa} || "Str";
+    $meta{$package}{$name}{isa} = $isa;
+
+    my $type = Types::Standard->get_type($isa) || $meta{subtype}{$package}{$isa};
+    $meta{type}{$package}{$name} = $type;
 
     my $attribute = __PACKAGE__->process_has($name, $package);
+
     { no strict 'refs'; *{"${package}::$name"} = $attribute; };
 }
 
